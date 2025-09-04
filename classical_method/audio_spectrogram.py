@@ -1,8 +1,3 @@
-# This function will:
-#   - read in an audio file
-#   - downsample to 16 kHz and reformat to mono, if needed
-#   - compute and return the spectrogram
-
 import torch
 import torchaudio as ta
 from torchcodec.decoders import AudioDecoder
@@ -12,6 +7,7 @@ import librosa
 """Resources used:
     - https://docs.pytorch.org/audio/2.7.0/generated/torchaudio.transforms.Spectrogram.html
     - https://docs.pytorch.org/torchcodec/stable/generated_examples/decoding/audio_decoding.html#creating-decoder-audio
+    - https://docs.pytorch.org/audio/2.7.0/generated/torchaudio.transforms.InverseSpectrogram.html#torchaudio.transforms.InverseSpectrogram
 """
 
 def plot_waveform(waveform, sr, title="Waveform", ax=None):
@@ -36,7 +32,12 @@ def plot_spectrogram(specgram, title=None, ylabel="freq_bin", ax=None):
     ax.set_ylabel(ylabel)
     ax.imshow(librosa.power_to_db(specgram), origin="lower", aspect="auto", interpolation="nearest")
 
-def audio_spectrogram(file_path):
+def spectrogram(file_path):
+# This function will:
+#   - read in an audio file
+#   - downsample to 16 kHz and reformat to mono, if needed
+#   - compute and return the spectrogram
+
     dec = AudioDecoder(file_path, sample_rate = 16000, num_channels = 1)
     samples = dec.get_all_samples()
     waveform = samples.data
@@ -45,15 +46,30 @@ def audio_spectrogram(file_path):
     # if window length is 10 ms
     window_length_in_time = 10e-3
     N = int(window_length_in_time * sr)
-    transform = ta.transforms.Spectrogram(n_fft = N, win_length=N, hop_length=N//2)
+    transform = ta.transforms.Spectrogram(n_fft = N, win_length=N, hop_length=N//2, power=None)
 
     spectrogram = transform(waveform)
-    return spectrogram, waveform, sr
+    # spectrogram is a tensor of size (1, N/2 + 1, t)
+    return spectrogram, waveform, sr, N
 
-spec, wav, sr = audio_spectrogram('../files/toby_guitar.mp3')
-print(spec[0].size())
 
-""" FOR PLOTTING
+
+def inverse_spectrogram(X, N):
+    # This function will:
+    #   - input a spectrogram of size (f,t)
+    #   - output an audio file
+    try:
+        transform = ta.transforms.InverseSpectrogram(n_fft = N, win_length=N, hop_length=N//2)
+        waveform = transform(X)
+        return waveform
+    except NameError: 
+        raise ValueError('N_fft not defined. Please ensure spectrogram() runs first.')
+
+
+"""spec, wav, sr = spectrogram('../files/toby_guitar.mp3')
+print(spec[0].shape)
+
+ FOR PLOTTING
 spec, wav, sr = audio_spectrogram('../files/toby_guitar.mp3')
 fig, axs = plt.subplots(2, 1)
 plot_waveform(wav, sr, title="Original waveform", ax=axs[0])
