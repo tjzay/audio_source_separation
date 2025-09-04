@@ -1,50 +1,50 @@
-import numpy as np
+import torch
 
-"""Resources used:
-    - https://www.youtube.com/watch?v=dyuCcWzmssE
-    """
-
-def nmf(V, rank, max_iter = 1000):
-    # ensure V is non-negative
-    if np.any(V < 0):
-        raise ValueError("V must be non-negative")
-    # get sizes of V
-    [f,t] = V.shape
-    # initialise W and H
-    W = np.random.rand(f,rank)
-    H = np.random.rand(rank,t)
-    divergence = KL_divergence(V,np.matmul(W,H))
-    # begin KL-divergence optimisation updates. Check for convergence.
-    epsilon = 0.001
-    for i in range(max_iter):
-        # Update H
-        current_guess = np.matmul(W,H)
-        ratio = V / np.maximum(current_guess, 1e-12) # Avoid division by zero
-        H *= np.matmul(W.T,ratio) / np.matmul(W.T, np.ones_like(V))
-
-        # Update W
-        current_guess = np.matmul(W,H)
-        ratio = V / np.maximum(current_guess, 1e-12) # Avoid division by zero
-        W *= np.matmul(ratio,H.T) / np.matmul(np.ones_like(V),H.T)
-
-        # Calculate current divergence and check if satisfactory
-        prev_divergence = divergence
-        divergence = KL_divergence(V, np.matmul(W,H))
-        print(f'Current divergence is: {divergence}')
-        if (abs(divergence-prev_divergence)/(prev_divergence) < epsilon):
-            return W,H
-
-    print('WARNING: Maximum iterations reached. Did not converge satisfactorily.')
-    return W, H
-
-def KL_divergence(A,B):
+def kl_divergence(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
     if A.shape != B.shape:
-        raise ValueError('Could not calculate KL divergence. A and B must be the same shape')
+        raise ValueError("Shapes must match")
+    A = A.clamp_min(1e-12)
+    B = B.clamp_min(1e-12)
+    return (A * (A/B).log() - A + B).sum()
 
-    [n,m] = A.shape
+@torch.no_grad()
+def nmf(V: torch.Tensor, rank: int, max_iter: int = 1000, eps: float = 1e-3, verbose: bool = True):
+    if V.dtype not in (torch.float16, torch.float32, torch.float64):
+        V = V.float()
+    if (V < 0).any():
+        raise ValueError("V must be non-negative")
 
-    A = np.maximum(A,1e-12) # stop 0's causing numerical problems
-    B = np.maximum(B,1e-12)
-    divergence = np.sum(A * np.log(A/B) - A + B)
+    F, T = V.shape
+    device, dtype = V.device, V.dtype
 
-    return divergence
+    # init
+    W = torch.rand(F, rank, device=device, dtype=dtype).clamp_min_(1e-8)
+    H = torch.rand(rank, T, device=device, dtype=dtype).clamp_min_(1e-8)
+
+    ones_FT = torch.ones_like(V)
+    prev_div = kl_divergence(V, (W @ H)).item()
+
+    for it in range(max_iter):
+        # update H
+        WH   = (W @ H).clamp_min(1e-12)
+        ratio= V / WH
+        H   *= (W.t() @ ratio) / (W.t() @ ones_FT).clamp_min(1e-12)
+        H.clamp_(min=1e-8)
+
+        # update W
+        WH   = (W @ H).clamp_min(1e-12)
+        ratio= V / WH
+        W   *= (ratio @ H.t()) / (ones_FT @ H.t()).clamp_min(1e-12)
+        W.clamp_(min=1e-8)
+
+        # check convergence
+        div = kl_divergence(V, (W @ H)).item()
+        if verbose:
+            print(f"iter {it+1}: KL={div:.6f}")
+        if abs(div - prev_div) / max(prev_div, 1e-12) < eps:
+            return W, H
+        prev_div = div
+
+    if verbose:
+        print("WARNING: max_iter reached without satisfactory convergence.")
+    return W, H
